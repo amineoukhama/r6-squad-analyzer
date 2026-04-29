@@ -1,0 +1,8 @@
+[
+  {"date": "2024-04-01", "map": "Oregon", "result": "Win", "mmr_change": 25, "current_mmr": 3200},
+  {"date": "2024-04-02", "map": "Clubhouse", "result": "Loss", "mmr_change": -18, "current_mmr": 3182},
+  {"date": "2024-04-03", "map": "Oregon", "result": "Win", "mmr_change": 22, "current_mmr": 3204},
+  {"date": "2024-04-04", "map": "Bank", "result": "Win", "mmr_change": 20, "current_mmr": 3224},
+  {"date": "2024-04-05", "map": "Clubhouse", "result": "Loss", "mmr_change": -15, "current_mmr": 3209},
+  {"date": "2024-04-06", "map": "Chalet", "result": "Win", "mmr_change": 24, "current_mmr": 3233}
+]
