@@ -2,50 +2,68 @@ import pandas as pd
 import os
 
 def load_match_data(filepath):
+    """Ingests raw JSON match telemetry and returns a sanitized Pandas DataFrame."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"CRITICAL: Data file missing at {filepath}")
+    
+    df = pd.read_json(filepath)
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date'])
+    return df
+
+def get_map_stats(df):
+    """Aggregates raw telemetry to calculate win/loss counts and win rates per map."""
+    stats = pd.crosstab(df['map'], df['result'])
+    for col in ['Win', 'Loss']:
+        if col not in stats.columns:
+            stats[col] = 0
+            
+    stats['Total Matches'] = stats['Win'] + stats['Loss']
+    stats['Win Rate %'] = (stats['Win'] / stats['Total Matches']) * 100
+    return stats.sort_values(by='Win Rate %', ascending=False)
+
+# --- NEW: The Synergy Engine ---
+def get_synergy_stats(filepath):
     """
-    Ingests raw JSON match telemetry and returns a sanitized Pandas DataFrame.
+    Calculates the win rate of specific Operator pairings.
+    Normalizes data so (A + B) is treated identically to (B + A).
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"CRITICAL: Data file missing at {filepath}")
     
     df = pd.read_json(filepath)
-    df['date'] = pd.to_datetime(df['date'])
     
-    return df
-
-# --- NEW: Map Aggregation Engine ---
-def get_map_stats(df):
-    """
-    Aggregates raw telemetry to calculate win/loss counts and win rates per map.
-    """
-    # 1. Cross-Tabulation: Count how many Wins and Losses happened on each Map
-    stats = pd.crosstab(df['map'], df['result'])
+    # 1. Normalization: We sort the two operator names alphabetically, 
+    # then join them with a ' + '. This ensures 'Ash + Zofia' and 'Zofia + Ash'
+    # both become strictly 'Ash + Zofia'.
+    df['Duo'] = df.apply(lambda row: ' + '.join(sorted([row['player_1'], row['player_2']])), axis=1)
     
-    # 2. Safety Check: If a team has zero losses overall, the 'Loss' column 
-    # won't exist in the crosstab, which breaks the math. We force it to exist.
+    # 2. Aggregation: Count Wins vs Losses for each unique Duo
+    stats = pd.crosstab(df['Duo'], df['result'])
+    
+    # 3. Safety Check: Ensure Win/Loss columns exist
     for col in ['Win', 'Loss']:
         if col not in stats.columns:
             stats[col] = 0
             
-    # 3. Feature Engineering: Calculate total matches and the Win Rate percentage
+    # 4. Math: Calculate Win Rate and sort by the highest performers
     stats['Total Matches'] = stats['Win'] + stats['Loss']
     stats['Win Rate %'] = (stats['Win'] / stats['Total Matches']) * 100
     
-    # 4. Sorting: Order the final table from highest win rate to lowest
-    return stats.sort_values(by='Win Rate %', ascending=False)
+    # Sort primarily by Win Rate, and secondarily by Total Matches to break ties
+    return stats.sort_values(by=['Win Rate %', 'Total Matches'], ascending=[False, False])
 
 # The testing block
 if __name__ == '__main__':
-    target_file = 'data/sample_match_data.json'
-    match_df = load_match_data(target_file)
+    synergy_file = 'data/synergy_data.json'
     
     print("Data Pipeline Active.")
-    print("\nExecuting Map Analytics:")
-    print("-" * 60)
+    print("\nExecuting Operator Synergy Analytics:")
+    print("-" * 65)
     
     # Run our new mathematical function
-    map_analytics = get_map_stats(match_df)
+    synergy_analytics = get_synergy_stats(synergy_file)
     
     # Print the aggregated table
-    print(map_analytics)
-    print("-" * 60)
+    print(synergy_analytics)
+    print("-" * 65)
