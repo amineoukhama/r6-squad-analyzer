@@ -1,8 +1,47 @@
 [
-  {"date": "2024-04-01", "map": "Oregon", "result": "Win", "mmr_change": 25, "current_mmr": 3200},
-  {"date": "2024-04-02", "map": "Clubhouse", "result": "Loss", "mmr_change": -18, "current_mmr": 3182},
-  {"date": "2024-04-03", "map": "Oregon", "result": "Win", "mmr_change": 22, "current_mmr": 3204},
-  {"date": "2024-04-04", "map": "Bank", "result": "Win", "mmr_change": 20, "current_mmr": 3224},
-  {"date": "2024-04-05", "map": "Clubhouse", "result": "Loss", "mmr_change": -15, "current_mmr": 3209},
-  {"date": "2024-04-06", "map": "Chalet", "result": "Win", "mmr_change": 24, "current_mmr": 3233}
+  {
+    "date": "2024-04-01",
+    "match_id": 1001,
+    "map": "Oregon",
+    "result": "Win",
+    "current_mmr": 3200,
+    "Ghost": 3150,
+    "Viper": 3100
+  },
+  {
+    "date": "2024-04-02",
+    "match_id": 1002,
+    "map": "Clubhouse",
+    "result": "Win",
+    "current_mmr": 3225,
+    "Ghost": 3170,
+    "Viper": 3080
+  },
+  {
+    "date": "2024-04-03",
+    "match_id": 1003,
+    "map": "Chalet",
+    "result": "Loss",
+    "current_mmr": 3210,
+    "Ghost": 3160,
+    "Viper": 3110
+  },
+  {
+    "date": "2024-04-04",
+    "match_id": 1004,
+    "map": "Oregon",
+    "result": "Win",
+    "current_mmr": 3240,
+    "Ghost": 3190,
+    "Viper": 3130
+  },
+  {
+    "date": "2024-04-05",
+    "match_id": 1005,
+    "map": "Bank",
+    "result": "Win",
+    "current_mmr": 3260,
+    "Ghost": 3220,
+    "Viper": 3150
+  }
 ]
