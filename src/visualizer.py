@@ -1,9 +1,9 @@
 import os
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import MaxNLocator
-from data_processor import load_match_data, get_map_stats, get_synergy_stats
 
 def generate_mmr_chart(df, output_path="assets/mmr_timeline.png"):
     """Generates a modern, legend-free line chart with inline terminal labels."""
@@ -11,10 +11,10 @@ def generate_mmr_chart(df, output_path="assets/mmr_timeline.png"):
     
     fig, ax = plt.subplots(figsize=(9, 5))
 
-    date_strings = df['date'].dt.strftime('%m-%d').tolist()
+    # SAFTEY FIX: Force 'date' to datetime before formatting, just in case SQLite passed it as a raw string
+    date_strings = pd.to_datetime(df['date']).dt.strftime('%m-%d').tolist()
     
-    # FIX 1: Explicitly ban 'mmr_change' and other non-player numeric columns
-    banned_cols = ['mmr_change', 'round', 'match_id']
+    banned_cols = ['mmr_change', 'round', 'match_id', 'date']
     player_cols = [col for col in df.select_dtypes(include=['number']).columns if col not in banned_cols]
     
     colors = ["#007AFF", "#FF9500", "#34C759", "#AF52DE", "#FF3B30"]
@@ -45,14 +45,13 @@ def generate_mmr_chart(df, output_path="assets/mmr_timeline.png"):
     ax.tick_params(axis='x', colors="#86868B", length=0, labelsize=9, rotation=0)
     ax.tick_params(axis='y', colors="#86868B", length=0)
 
-    # FIX 2: Dynamically zoom the Y-axis so the peaks and valleys are visible!
+    # Calculate padding dynamically based on the spread of MMR
     all_mmr_values = df[player_cols].values.flatten()
-    min_mmr = min(all_mmr_values)
-    max_mmr = max(all_mmr_values)
-    
-    # Add a little padding above and below the highest/lowest points
-    padding = (max_mmr - min_mmr) * 0.5 if max_mmr != min_mmr else 100
-    ax.set_ylim(min_mmr - padding, max_mmr + padding)
+    if len(all_mmr_values) > 0:
+        min_mmr = min(all_mmr_values)
+        max_mmr = max(all_mmr_values)
+        padding = (max_mmr - min_mmr) * 0.5 if max_mmr != min_mmr else 100
+        ax.set_ylim(min_mmr - padding, max_mmr + padding)
 
     ax.set_xlim(-0.5, len(date_strings) + 0.8)
 
@@ -97,7 +96,7 @@ def generate_map_chart(stats_df, output_path="assets/map_win_rates.png"):
     ax.tick_params(colors="#86868B", length=0)
 
     max_val = max(stats_df['Win'].max(), stats_df['Loss'].max())
-    safe_max = max_val if max_val > 0 else 1 
+    safe_max = max_val if max_val > 0 else 1
     ax.set_ylim(0, safe_max * 1.25)
     
     ax.legend(frameon=False, loc='upper right', ncol=2)
@@ -124,7 +123,7 @@ def generate_synergy_chart(stats_df, output_path="assets/synergy_win_rates.png")
     
     ax.set_yticks(y_positions)
     ax.set_yticklabels(stats_df.index, color="#1D1D1F", fontweight='medium')
-    ax.invert_yaxis() 
+    ax.invert_yaxis()
     
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.grid(axis='x', color='#E5E5EA', linestyle='-', linewidth=1, alpha=0.4, zorder=1)
@@ -137,7 +136,7 @@ def generate_synergy_chart(stats_df, output_path="assets/synergy_win_rates.png")
     ax.spines['bottom'].set_linewidth(1.5)
     ax.tick_params(colors="#86868B", length=0)
     
-    ax.set_xlim(0, 100) 
+    ax.set_xlim(0, 100)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.tight_layout()
@@ -145,21 +144,3 @@ def generate_synergy_chart(stats_df, output_path="assets/synergy_win_rates.png")
     plt.close()
 
     return output_path
-
-
-if __name__ == '__main__':
-    target_file = 'data/sample_match_data.json'
-    synergy_file = 'data/synergy_data.json'
-    
-    match_df = load_match_data(target_file)
-    map_analytics = get_map_stats(match_df)
-    synergy_analytics = get_synergy_stats(synergy_file)
-    
-    print("Rendering MMR chart...")
-    generate_mmr_chart(match_df)
-    print("Rendering Map Analytics chart...")
-    generate_map_chart(map_analytics)
-    print("Rendering Synergy Analytics chart...")
-    generate_synergy_chart(synergy_analytics)
-    
-    print("Success! All high-resolution charts saved to the assets folder.")

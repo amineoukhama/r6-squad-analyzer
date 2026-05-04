@@ -1,43 +1,43 @@
-import aiohttp
+import os
 import logging
+from typing import Optional
+from siegeapi import Auth
 
-# Set up basic logging so we can see API errors in the terminal
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# NOTE: Since Ubisoft lacks a public API, this URL represents the standard architecture.
-# In a full production app, this would be replaced by a TRN API URL and an API Key header.
-API_BASE_URL = "https://api.example-r6-stats.com/v1/players/"
-
-async def fetch_player_data(player_name: str) -> dict:
-    """
-    Asynchronously reaches out to a live gaming API to fetch player telemetry.
-    Returns a dictionary of the player's stats if successful, or None if they don't exist.
-    """
-    url = f"{API_BASE_URL}{player_name}"
+async def fetch_player_data(player_name: str) -> Optional[dict]:
+    """Fetches live Ranked 2.0 telemetry for a given player using siegeapi."""
+    email = os.getenv("UBISOFT_EMAIL")
+    password = os.getenv("UBISOFT_PASSWORD")
     
-    # In a real app, you would add headers here: headers={"TRN-Api-Key": "YOUR_KEY_HERE"}
+    if not email or not password:
+        logger.error("API ABORTED: Missing Ubisoft credentials in .env file.")
+        return None
+
+    # Instantiate Auth outside the try block so 'finally' can always access it
+    auth = Auth(email, password)
     
     try:
-        # Open an asynchronous web session
-        async with aiohttp.ClientSession() as session:
-            # Fire the GET request to the internet
-            async with session.get(url) as response:
-                
-                # Check if the API found the player
-                if response.status == 200:
-                    logger.info(f"API Success: Fetched live data for {player_name}")
-                    data = await response.json()
-                    return data
-                
-                elif response.status == 404:
-                    logger.warning(f"API Error 404: Player '{player_name}' not found on Ubisoft servers.")
-                    return None
-                    
-                else:
-                    logger.error(f"API Error {response.status}: Failed to reach the server.")
-                    return None
-                    
+        player = await auth.get_player(name=player_name)
+        await player.load_ranked_v2()
+        
+        current_mmr = player.ranked_profile.rank_points
+        current_rank = player.ranked_profile.rank
+        
+        live_data = {
+            "name": player.name,
+            "current_mmr": current_mmr,
+            "rank": current_rank
+        }
+        
+        logger.info(f"API Success: Fetched live MMR ({current_mmr}) for {player_name}")
+        return live_data
+        
     except Exception as e:
-        logger.error(f"Network Failure: Could not execute web request. Details: {e}")
+        logger.error(f"API Error fetching {player_name}: {e}")
         return None
+        
+    finally:
+        # This guarantees the connection closes, preventing memory leaks, even if the API throws an error
+        await auth.close()

@@ -4,9 +4,11 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from data_processor import load_match_data, get_map_stats, get_synergy_stats
+# FIXED: Added load_match_data back so the mapban command functions properly
+from data_processor import load_match_data, load_match_data_from_db, get_map_stats, get_synergy_stats
 from visualizer import generate_mmr_chart, generate_map_chart, generate_synergy_chart
-from api_client import fetch_player_data  # <-- NEW: Our Network Module
+from api_client import fetch_player_data
+from db_manager import init_db, log_mmr
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -18,19 +20,20 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 USERS_FILE = 'data/users.json'
 
-def load_users():
+def load_users() -> dict:
     if not os.path.exists(USERS_FILE):
         return {}
     with open(USERS_FILE, 'r') as f:
         return json.load(f)
 
-def save_users(users_data):
+def save_users(users_data: dict) -> None:
     with open(USERS_FILE, 'w') as f:
         json.dump(users_data, f, indent=4)
 
 @bot.event
 async def on_ready():
     print(f'System Online: Logged in securely as {bot.user.name}')
+    init_db()
 
 @bot.command(name='ping')
 async def ping(ctx):
@@ -52,30 +55,34 @@ async def rank(ctx, *members: discord.Member):
     target_members = members if members else [ctx.author]
     players_to_graph = []
     
-    status_msg = await ctx.send(f"⏳ *Querying Ubisoft Network for telemetry...*")
+    status_msg = await ctx.send("⏳ *Querying Ubisoft Network for telemetry...*")
+    live_data_found = False
 
     for member in target_members:
         discord_id = str(member.id)
-        
-        # 1. OPTIMISTIC FALLBACK: Check DB, otherwise guess their Nickname
         r6_name = users.get(discord_id, member.display_name)
         
-        # 2. NETWORK CALL: Try the live API
         live_data = await fetch_player_data(r6_name)
         
         if live_data:
-            # V3.0 Expansion: In the future, we format 'live_data' here.
-            await ctx.send(f"✅ Live data found for {r6_name}!")
+            mmr = live_data["current_mmr"]
+            rank_name = live_data["rank"]
+            
+            log_mmr(r6_name, mmr, rank_name)
+            
+            await ctx.send(f"📡 **Live Network Stats for {r6_name}:**\nRank: **{rank_name}** | MMR: **{mmr}**\n*(Snapshot saved to database)*")
+            live_data_found = True
         else:
-            # 3. LOCAL FALLBACK: API failed, use our local JSON data
             players_to_graph.append(r6_name)
 
     if not players_to_graph:
-        return await status_msg.edit(content="❌ **Error:** No valid telemetry found on Network or Local DB.")
+        await status_msg.delete()
+        if not live_data_found:
+            await ctx.send("❌ **Error:** No valid telemetry found on Network or Local DB.")
+        return
 
     try:
-        # Load local database for the fallback players
-        df = load_match_data('data/sample_match_data.json')
+        df = load_match_data_from_db()
         valid_columns = ['date']
         
         for player in players_to_graph:
