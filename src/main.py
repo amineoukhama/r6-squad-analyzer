@@ -1,14 +1,14 @@
 import os
 import json
 import discord
+import pandas as pd
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# FIXED: Added load_match_data back so the mapban command functions properly
-from data_processor import load_match_data, load_match_data_from_db, get_map_stats, get_synergy_stats
+from data_processor import load_match_data_from_db, get_synergy_stats
 from visualizer import generate_mmr_chart, generate_map_chart, generate_synergy_chart
-from api_client import fetch_player_data
 from db_manager import init_db, log_mmr
+from tracker_scraper import fetch_recent_matches
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -41,7 +41,6 @@ async def ping(ctx):
 
 @bot.command(name='register')
 async def register(ctx, r6_name: str):
-    """Links a Discord account to an R6 player name in the database."""
     discord_id = str(ctx.author.id)
     users = load_users()
     users[discord_id] = r6_name
@@ -50,27 +49,26 @@ async def register(ctx, r6_name: str):
 
 @bot.command(name='rank')
 async def rank(ctx, *members: discord.Member):
-    """Generates an MMR timeline with Optimistic Network Fetching."""
     users = load_users()
     target_members = members if members else [ctx.author]
     players_to_graph = []
     
-    status_msg = await ctx.send("⏳ *Querying Ubisoft Network for telemetry...*")
+    status_msg = await ctx.send("🕵️‍♂️ *Deploying Ghost Browser for MMR Telemetry...*")
     live_data_found = False
 
     for member in target_members:
         discord_id = str(member.id)
         r6_name = users.get(discord_id, member.display_name)
         
-        live_data = await fetch_player_data(r6_name)
+        df_matches = await fetch_recent_matches(r6_name)
         
-        if live_data:
-            mmr = live_data["current_mmr"]
-            rank_name = live_data["rank"]
+        if not df_matches.empty and 'RP' in df_matches.columns:
+            mmr = int(df_matches.iloc[0]['RP'])
+            rank_name = "Ranked (Scraped)"
             
             log_mmr(r6_name, mmr, rank_name)
             
-            await ctx.send(f"📡 **Live Network Stats for {r6_name}:**\nRank: **{rank_name}** | MMR: **{mmr}**\n*(Snapshot saved to database)*")
+            await ctx.send(f"📡 **Live Scraped Stats for {r6_name}:**\nMMR: **{mmr}**\n*(Snapshot saved to database)*")
             live_data_found = True
         else:
             players_to_graph.append(r6_name)
@@ -78,7 +76,7 @@ async def rank(ctx, *members: discord.Member):
     if not players_to_graph:
         await status_msg.delete()
         if not live_data_found:
-            await ctx.send("❌ **Error:** No valid telemetry found on Network or Local DB.")
+            await ctx.send("❌ **Error:** Scraper failed to extract RP. R6Tracker may be blocking the request.")
         return
 
     try:
@@ -98,22 +96,43 @@ async def rank(ctx, *members: discord.Member):
         chart_path = generate_mmr_chart(filtered_df)
         
         discord_file = discord.File(chart_path, filename="mmr_timeline.png")
-        await ctx.send(content="**Squad MMR Timeline (Local Fallback)**", file=discord_file)
+        await ctx.send(content="**Squad MMR Timeline (Local Database)**", file=discord_file)
         await status_msg.delete()
         
     except Exception as e:
         await ctx.send(f"⚠️ **CRITICAL ERROR:** Failed to process telemetry.\n`{e}`")
 
 @bot.command(name='mapban')
-async def mapban(ctx):
-    status_msg = await ctx.send("⏳ *Aggregating map statistics...*")
+async def mapban(ctx, r6_name: str = None):
+    if not r6_name:
+        users = load_users()
+        r6_name = users.get(str(ctx.author.id))
+        if not r6_name:
+            await ctx.send("⚠️ You aren't registered! Type `!register <R6_Name>` or use `!mapban <R6_Name>`.")
+            return
+
+    status_msg = await ctx.send(f"🕵️‍♂️ *Deploying Ghost Browser... scraping live match history for **{r6_name}**...*")
+    
     try:
-        df = load_match_data('data/sample_match_data.json')
-        map_analytics = get_map_stats(df)
-        chart_path = generate_map_chart(map_analytics)
-        discord_file = discord.File(chart_path, filename="map_win_rates.png")
-        await ctx.send(content="**Map Analytics: Objective Ban Guide**", file=discord_file)
+        df = await fetch_recent_matches(r6_name)
+        
+        if df.empty:
+            await status_msg.edit(content=f"❌ Failed to extract match data for {r6_name}.")
+            return
+
+        map_stats = pd.crosstab(df['Map'], df['Result'])
+        
+        if 'Win' not in map_stats.columns:
+            map_stats['Win'] = 0
+        if 'Loss' not in map_stats.columns:
+            map_stats['Loss'] = 0
+
+        chart_path = generate_map_chart(map_stats)
+        discord_file = discord.File(chart_path, filename="mapban.png")
+        
+        await ctx.send(content=f"📊 **Live Map Analytics for {r6_name}** (Last {len(df)} Matches)", file=discord_file)
         await status_msg.delete()
+        
     except Exception as e:
         await ctx.send(f"⚠️ **CRITICAL ERROR:** Failed to process map analytics.\n`{e}`")
 

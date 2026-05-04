@@ -17,7 +17,6 @@ def load_match_data_from_db():
     if df.empty:
         return pd.DataFrame(columns=['date'])
 
-    # Upgraded to pivot_table to safely handle duplicate daily entries
     pivot_df = df.pivot_table(
         index='date', 
         columns='r6_name', 
@@ -26,29 +25,6 @@ def load_match_data_from_db():
     ).reset_index()
     
     return pivot_df
-
-def load_match_data(filepath):
-    """Ingests raw JSON match telemetry and returns a sanitized Pandas DataFrame."""
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"CRITICAL: Data file missing at {filepath}")
-    
-    df = pd.read_json(filepath)
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'])
-    return df
-
-def get_map_stats(df):
-    """Aggregates raw telemetry to calculate win/loss counts and win rates per map."""
-    stats = pd.crosstab(df['map'], df['result'])
-    
-    for col in ['Win', 'Loss']:
-        if col not in stats.columns:
-            stats[col] = 0
-            
-    stats['Total Matches'] = stats['Win'] + stats['Loss']
-    stats['Win Rate %'] = (stats['Win'] / stats['Total Matches']) * 100
-    
-    return stats.sort_values(by='Win Rate %', ascending=False)
 
 def get_synergy_stats(filepath):
     """
@@ -60,7 +36,6 @@ def get_synergy_stats(filepath):
     
     df = pd.read_json(filepath)
     
-    # Normalize pairings alphabetically to ensure accurate counting
     df['Duo'] = df.apply(lambda row: ' + '.join(sorted([row['player_1'], row['player_2']])), axis=1)
     
     stats = pd.crosstab(df['Duo'], df['result'])
