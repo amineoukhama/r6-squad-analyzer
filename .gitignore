@@ -222,3 +222,5 @@ data/bot_database.db
 data/users.json
 data/sample_match_data.json
 data/synergy_data.json
+
+assets/*.png

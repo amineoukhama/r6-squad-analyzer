@@ -3,6 +3,7 @@ import json
 import discord
 import pandas as pd
 from discord.ext import commands
+from discord import app_commands
 from dotenv import load_dotenv
 
 from data_processor import load_match_data_from_db, get_synergy_stats
@@ -14,8 +15,6 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
 intents = discord.Intents.default()
-intents.message_content = True
-
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 USERS_FILE = 'data/users.json'
@@ -34,50 +33,53 @@ def save_users(users_data: dict) -> None:
 async def on_ready():
     print(f'System Online: Logged in securely as {bot.user.name}')
     init_db()
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} Slash Commands to Discord.")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
 
-@bot.command(name='ping')
-async def ping(ctx):
-    await ctx.send(f'Pong! 🏓 Gateway latency: {round(bot.latency * 1000)}ms.')
+@bot.tree.command(name='ping', description='Check the latency of the bot.')
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f'Pong! 🏓 Gateway latency: {round(bot.latency * 1000)}ms.')
 
-@bot.command(name='register')
-async def register(ctx, r6_name: str):
-    discord_id = str(ctx.author.id)
+@bot.tree.command(name='register', description='Link your Discord account to your exact Ubisoft name.')
+@app_commands.describe(r6_name="Your exact Ubisoft username")
+async def register(interaction: discord.Interaction, r6_name: str):
+    discord_id = str(interaction.user.id)
     users = load_users()
     users[discord_id] = r6_name
     save_users(users)
-    await ctx.send(f"✅ **Registration Complete:** Your Discord is now linked to R6 Player: `{r6_name}`")
+    await interaction.response.send_message(f"✅ **Registration Complete:** Your Discord is now linked to R6 Player: `{r6_name}`")
 
-@bot.command(name='rank')
-async def rank(ctx, *members: discord.Member):
-    users = load_users()
-    target_members = members if members else [ctx.author]
-    players_to_graph = []
+@bot.tree.command(name='rank', description='Generates an MMR timeline for you and your squad.')
+@app_commands.describe(p1="Squad Member 1", p2="Squad Member 2", p3="Squad Member 3")
+async def rank(interaction: discord.Interaction, p1: discord.Member = None, p2: discord.Member = None, p3: discord.Member = None):
+    await interaction.response.defer()
     
-    status_msg = await ctx.send("🕵️‍♂️ *Deploying Ghost Browser for MMR Telemetry...*")
-    live_data_found = False
+    users = load_users()
+    target_members = [interaction.user]
+    if p1: target_members.append(p1)
+    if p2: target_members.append(p2)
+    if p3: target_members.append(p3)
+    
+    players_to_graph = []
+    log_messages = []
 
     for member in target_members:
         discord_id = str(member.id)
         r6_name = users.get(discord_id, member.display_name)
+        players_to_graph.append(r6_name)
         
         df_matches = await fetch_recent_matches(r6_name)
         
         if not df_matches.empty and 'RP' in df_matches.columns:
             mmr = int(df_matches.iloc[0]['RP'])
             rank_name = "Ranked (Scraped)"
-            
             log_mmr(r6_name, mmr, rank_name)
-            
-            await ctx.send(f"📡 **Live Scraped Stats for {r6_name}:**\nMMR: **{mmr}**\n*(Snapshot saved to database)*")
-            live_data_found = True
+            log_messages.append(f"✅ Extracted **{mmr}** MMR for {r6_name}")
         else:
-            players_to_graph.append(r6_name)
-
-    if not players_to_graph:
-        await status_msg.delete()
-        if not live_data_found:
-            await ctx.send("❌ **Error:** Scraper failed to extract RP. R6Tracker may be blocking the request.")
-        return
+            log_messages.append(f"⚠️ Scrape failed for {r6_name}. Using local data if available.")
 
     try:
         df = load_match_data_from_db()
@@ -87,66 +89,78 @@ async def rank(ctx, *members: discord.Member):
             if player in df.columns:
                 valid_columns.append(player)
             else:
-                await ctx.send(f"⚠️ **Notice:** No local match data found for `{player}`. Type `!register <R6_Name>` to fix.")
+                log_messages.append(f"❌ No history found for `{player}`. Ensure they are registered.")
                 
         if len(valid_columns) == 1:
-            return await status_msg.edit(content="❌ **Error:** Aborting render. No valid data columns found.")
+            await interaction.edit_original_response(content="\n".join(log_messages) + "\n\n**Aborting:** No valid data to graph.")
+            return
             
         filtered_df = df[valid_columns]
         chart_path = generate_mmr_chart(filtered_df)
         
         discord_file = discord.File(chart_path, filename="mmr_timeline.png")
-        await ctx.send(content="**Squad MMR Timeline (Local Database)**", file=discord_file)
-        await status_msg.delete()
+        header = "**Squad MMR Timeline**\n" + "\n".join(log_messages)
+        
+        await interaction.edit_original_response(content=header, attachments=[discord_file])
         
     except Exception as e:
-        await ctx.send(f"⚠️ **CRITICAL ERROR:** Failed to process telemetry.\n`{e}`")
+        await interaction.edit_original_response(content=f"⚠️ **CRITICAL ERROR:** \n`{e}`")
 
-@bot.command(name='mapban')
-async def mapban(ctx, r6_name: str = None):
-    if not r6_name:
-        users = load_users()
-        r6_name = users.get(str(ctx.author.id))
-        if not r6_name:
-            await ctx.send("⚠️ You aren't registered! Type `!register <R6_Name>` or use `!mapban <R6_Name>`.")
-            return
-
-    status_msg = await ctx.send(f"🕵️‍♂️ *Deploying Ghost Browser... scraping live match history for **{r6_name}**...*")
+@bot.tree.command(name='mapban', description='Generates a map ban guide. Filters for shared matches if friends are tagged.')
+@app_commands.describe(p1="Squad Member 1", p2="Squad Member 2")
+async def mapban(interaction: discord.Interaction, p1: discord.Member = None, p2: discord.Member = None):
+    await interaction.response.defer()
     
+    users = load_users()
+    target_members = [interaction.user]
+    if p1: target_members.append(p1)
+    if p2: target_members.append(p2)
+
     try:
-        df = await fetch_recent_matches(r6_name)
-        
-        if df.empty:
-            await status_msg.edit(content=f"❌ Failed to extract match data for {r6_name}.")
+        scraped_dfs = []
+        for member in target_members:
+            r6_name = users.get(str(member.id), member.display_name)
+            df = await fetch_recent_matches(r6_name)
+            if not df.empty:
+                scraped_dfs.append(df)
+
+        if not scraped_dfs:
+            await interaction.edit_original_response(content="❌ Failed to extract match data for any players.")
             return
 
-        map_stats = pd.crosstab(df['Map'], df['Result'])
+        squad_df = scraped_dfs[0]
+        if len(scraped_dfs) > 1:
+            for next_df in scraped_dfs[1:]:
+                squad_df = pd.merge(squad_df, next_df, on=['Map', 'Result'], how='inner')
+
+        if squad_df.empty:
+            await interaction.edit_original_response(content="❌ **No Shared Matches Found:** You don't have any recent overlapping matches with this squad.")
+            return
+
+        map_stats = pd.crosstab(squad_df['Map'], squad_df['Result'])
         
-        if 'Win' not in map_stats.columns:
-            map_stats['Win'] = 0
-        if 'Loss' not in map_stats.columns:
-            map_stats['Loss'] = 0
+        if 'Win' not in map_stats.columns: map_stats['Win'] = 0
+        if 'Loss' not in map_stats.columns: map_stats['Loss'] = 0
 
         chart_path = generate_map_chart(map_stats)
         discord_file = discord.File(chart_path, filename="mapban.png")
         
-        await ctx.send(content=f"📊 **Live Map Analytics for {r6_name}** (Last {len(df)} Matches)", file=discord_file)
-        await status_msg.delete()
+        title = f"Live Map Analytics for Squad" if len(scraped_dfs) > 1 else f"Live Map Analytics for {target_members[0].display_name}"
+        await interaction.edit_original_response(content=f"📊 **{title}** (Found {len(squad_df)} Shared Matches)", attachments=[discord_file])
         
     except Exception as e:
-        await ctx.send(f"⚠️ **CRITICAL ERROR:** Failed to process map analytics.\n`{e}`")
+        await interaction.edit_original_response(content=f"⚠️ **CRITICAL ERROR:** \n`{e}`")
 
-@bot.command(name='synergy')
-async def synergy(ctx):
-    status_msg = await ctx.send("⏳ *Running Data Science Synergy Engine...*")
+@bot.tree.command(name='synergy', description='View Data Science Operator Synergy Ratings.')
+async def synergy(interaction: discord.Interaction):
+    await interaction.response.defer()
     try:
         synergy_analytics = get_synergy_stats('data/synergy_data.json')
         chart_path = generate_synergy_chart(synergy_analytics)
         discord_file = discord.File(chart_path, filename="synergy_win_rates.png")
-        await ctx.send(content="**Data Science: Operator Synergy Ratings**", file=discord_file)
-        await status_msg.delete()
+        await interaction.edit_original_response(content="**Data Science: Operator Synergy Ratings**", attachments=[discord_file])
     except Exception as e:
-        await ctx.send(f"⚠️ **CRITICAL ERROR:** Failed to process synergy analytics.\n`{e}`")
+        await interaction.edit_original_response(content=f"⚠️ **CRITICAL ERROR:** \n`{e}`")
 
 if __name__ == '__main__':
     if not TOKEN or TOKEN == "your_secret_token_goes_here":
